@@ -1,0 +1,9 @@
+=== Method Comparison, Set (ii): C=0.1, G=2, M=3.5, Y=1.5 ===
+  N = 128,  dt = T/(4*N),  COS reference (N_cos=2048): 6.827618
+
+  Method                             |e_ATM|    CPU(s)  Notes
+  ----------------------------------------------------------------------------
+  COS (reference)                        ---    0.0009  benchmark
+  B-spline Galerkin (p=3)          4.856e-04     3.355  unconditionally stable, high accuracy
+  GL finite difference              UNSTABLE      0.001  UNSTABLE/diverged: Y in (1,2) lacks dissipation
+  PIDE (FFT trapezoidal)           1.120e+00     0.055  missing near-origin compensation for Y>1

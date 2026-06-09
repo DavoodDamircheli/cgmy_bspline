@@ -1,0 +1,14 @@
+============================================================
+=== Calibration: Speed Summary ===
+============================================================
+  Grid size N:         64
+  Bandwidth:           32
+  Strikes:             6
+  Maturities:          5
+  DE popsize:          6
+  DE maxiter:          80
+  Total function evals:2069
+  CPU time:            137.6s
+  Avg time/eval:       66.5ms
+  In-sample RMSE:      0.002103
+============================================================

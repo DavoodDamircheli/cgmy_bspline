@@ -1,0 +1,3 @@
+# Allow all files in this directory regardless of root gitignore
+!*.png
+!*.csv
