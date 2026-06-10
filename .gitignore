@@ -15,12 +15,15 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# generated experiment outputs (CSVs + PNGs produced by run_all_paper_experiments.py)
-cgmy_bspline/results/
+# LaTeX build artefacts inside results/
+cgmy_bspline/results/*.aux
+cgmy_bspline/results/*.log
+cgmy_bspline/results/*.out
+cgmy_bspline/results/*.toc
 
-# stray generated files from standalone scripts run in the project root
-*.csv
-*.png
+# stray generated files from standalone scripts run in the project root (not results/)
+/*.csv
+/*.png
 
 # editor / OS
 .DS_Store
