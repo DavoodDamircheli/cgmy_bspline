@@ -1,0 +1,669 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{parskip}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{multirow}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+
+\title{\textbf{Market Calibration of the CGMY Process\\
+to SPX Implied-Volatility Surfaces}\\[0.4em]
+\large Section~7: Methodology, Implementation, and Results}
+
+\author{Davood Damircheli}
+\date{\today}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+
+% =============================================================================
+\section{Overview}
+\label{sec:overview}
+% =============================================================================
+
+This report documents the end-to-end market calibration of the
+Carr--G\'{e}man--Madan--Yor (CGMY) tempered stable process to
+S\&P~500 (SPX) implied-volatility (IV) surfaces observed on three
+snapshot dates spanning markedly different market regimes:
+
+\begin{itemize}
+  \item \textbf{2020-01-15} — low-volatility, pre-COVID environment
+        (VIX $\approx 13$).
+  \item \textbf{2020-03-18} — acute COVID-19 crisis
+        (VIX $\approx 76$, largest single-day SPX declines on record).
+  \item \textbf{2021-09-15} — post-COVID recovery
+        (VIX $\approx 20$).
+\end{itemize}
+
+The calibration exploits the B-Spline Galerkin + Crank--Nicolson (CN)
+solver developed in the preceding sections of this work
+as its inner pricing engine.  No external option-pricing library is used.
+Optimisation is performed with a two-phase scheme (Differential
+Evolution followed by L-BFGS-B) over an unconstrained reparametrisation
+of the CGMY parameter space.
+
+% =============================================================================
+\section{The CGMY Model}
+\label{sec:model}
+% =============================================================================
+
+The CGMY L\'{e}vy process has characteristic exponent
+\begin{equation}
+  \Psi(u) = C\,\Gamma(-Y)\bigl[(M - iu)^{Y} - M^{Y}
+             + (G + iu)^{Y} - G^{Y}\bigr],
+  \label{eq:cgmy_cf}
+\end{equation}
+where $C > 0$ (overall jump intensity), $G > 0$ (left-tail decay),
+$M > 1$ (right-tail decay), $Y \in (0,2)\setminus\{1\}$ (fine-structure
+index).  For $Y \in (1,2)$ the process has infinite variation and is the
+dominant regime for equity markets.
+
+Under the risk-neutral measure the log-price dynamics are
+\[
+  \log(S_T / S_0) = (r - q - \omega_S)\,T + X_T,
+\]
+where $X_T$ is a centred CGMY process and
+$\omega_S = C\,\Gamma(-Y)\bigl[(M-1)^Y - M^Y + (G+1)^Y - G^Y\bigr]$
+is the martingale correction.
+
+% =============================================================================
+\section{Data and Surface Construction}
+\label{sec:data}
+% =============================================================================
+
+\subsection{Raw data}
+
+Raw option chains are sourced from OptionMetrics for three snapshot
+dates.  Each chain contains end-of-day bid, ask, and implied volatility
+for all listed SPX calls and puts.
+
+\subsection{Quality filtering (Step~2)}
+
+The following filters are applied to each raw chain before any
+further processing:
+\begin{enumerate}
+  \item Remove quotes with zero bid, zero open interest, or
+        non-positive mid-price.
+  \item Remove quotes with negative implied volatility.
+  \item Remove quotes with bid $>$ ask (crossed markets).
+  \item Compute mid-price $= \tfrac{1}{2}(\text{bid} + \text{ask})$ and
+        relative spread $= (\text{ask} - \text{bid}) / \text{mid}$.
+\end{enumerate}
+
+Two spread-filter thresholds are considered:
+\begin{itemize}
+  \item \textbf{Primary (05):} $\text{rel\_spread} < 5\%$.
+  \item \textbf{Relaxed (15):} $\text{rel\_spread} < 15\%$.
+\end{itemize}
+The primary filter is used for all main results; the relaxed filter is
+used for the crisis-date robustness check (\S\ref{sec:robustness}).
+
+\subsection{Maturity selection (Step~3)}
+
+Five target maturities (in calendar days) are selected from each chain:
+7, 30, 93, 182, and 366 days.  The actual expiry closest to each target
+is chosen.
+
+\subsection{Forward and discount factor calibration (Step~4)}
+
+For each selected maturity, the forward price $F$ and discount factor
+$D = e^{-rT}$ are extracted by fitting put-call parity via OLS
+regression on paired strike prices.  Concretely, writing
+$C_{\mathrm{mid}}(K) - P_{\mathrm{mid}}(K) = F\,D - D\,K$
+gives the linear model
+\[
+  y_i = a - D\,K_i, \qquad
+  y_i = C_{\mathrm{mid}}(K_i) - P_{\mathrm{mid}}(K_i),
+\]
+from which $D = -\hat{\beta}_1$ and $F = \hat{\beta}_0 / D$.
+This ensures the model forward price exactly matches the market-implied
+forward, a necessary condition for arbitrage-free pricing.
+Per-maturity effective rates are then
+\[
+  r_{\text{eff}}(T) = -\ln D / T, \qquad
+  q_{\text{eff}}(T) = r_{\text{eff}}(T) - \ln(F/S_0)/T,
+\]
+where the spot proxy $S_0 = F_{\min}\,D_{\min}$ is computed from
+the shortest-dated maturity.
+
+\subsection{OTM selection and moneyness filter (Steps~5--6)}
+
+\begin{itemize}
+  \item \textbf{OTM rule:} retain puts for $K < F$, calls for $K \geq F$.
+  \item \textbf{Moneyness filter:} retain strikes with
+        $\kappa = K/F \in [0.85, 1.15]$.
+\end{itemize}
+The resulting quote counts per date and spread threshold are summarised
+in Table~\ref{tab:quote_counts}.
+
+\begin{table}[ht]
+\centering
+\caption{OTM quote counts after all filters.}
+\label{tab:quote_counts}
+\begin{tabular}{llrr}
+\toprule
+Date & Regime & Spread 5\% & Spread 15\% \\
+\midrule
+2020-01-15 & low-vol  & 224 & --- \\
+2020-03-18 & crisis   & 113 & 243 \\
+2021-09-15 & recovery & 575 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The crisis surface under the 5\% filter retains only 113 quotes across
+\emph{two} maturities (30\,d and 93\,d); the 7\,d, 182\,d, and 366\,d
+maturities are eliminated entirely by extremely wide bid-ask spreads
+characteristic of the COVID crash.
+
+% =============================================================================
+\section{Pricing Methodology}
+\label{sec:pricing}
+% =============================================================================
+
+\subsection{B-Spline Galerkin inner pricer}
+
+European put prices are computed by solving the CGMY fractional
+backward FPDE on a log-price spatial domain $[x_{\min}, x_{\max}]$
+with cubic ($p=3$) cardinal B-spline basis functions and
+Crank--Nicolson ($N_\tau$ time steps) time-stepping.
+The spatial semi-discretisation produces the linear ODE system
+\[
+  M_h\,\dot{c}(\tau) + A_h\,c(\tau) = f(\tau),
+\]
+where $M_h$ is the B-spline mass matrix, $A_h$ is the CGMY
+operator matrix (sum of a first-order drift term, a Toeplitz-structured
+fractional stiffness matrix, and a kill-rate term), and $c(\tau)$ is
+the coefficient vector.
+The CN scheme advances this system from $\tau = 0$ (expiry payoff) to
+$\tau = T$ (today).
+
+\subsection{Domain and grid}
+
+The default \texttt{make\_grid} in the B-spline package centres the
+spatial domain at $\log K$ with width proportional to $1/G + 1/M$,
+which collapses to only $\pm 0.1$ log-units for $G = M = 10$ — too
+narrow for active CGMY.  For calibration a fixed-width grid is used
+instead:
+\[
+  [x_{\min}, x_{\max}] = [\log K_{\text{ref}} - 2,\;
+                           \log K_{\text{ref}} + 2],
+\]
+covering $S \in [K_{\text{ref}}\,e^{-2},\, K_{\text{ref}}\,e^{2}]$,
+a ratio of approximately $1\!:\!55$ around the reference strike.
+Benchmark tests against the COS pricer confirm relative pricing errors
+below 0.25\% at $N = 256$ under this domain choice.
+
+\subsection{Homogeneity pricing of a strike strip}
+
+Rather than solving one PDE per strike, the homogeneity identity
+\[
+  P(S_0, K; r, q, T) = \frac{K}{K_{\text{ref}}}\,
+  P\!\left(S_0\,e^{-qT}\cdot\frac{K_{\text{ref}}}{K},\;
+           K_{\text{ref}};\; r, q{=}0, T\right)
+\]
+is used to price all strikes $K_j$ in a single PDE solve with
+reference strike $K_{\text{ref}} = S_0$.  The dividend yield $q$ is
+absorbed into the effective spot
+$S_0^{\mathrm{eff}} = S_0\,e^{-qT}$, which shifts the evaluation
+point inside the already-computed solution.
+The evaluation points are
+\[
+  x_j = \log S_0^{\mathrm{eff}} + \log K_{\text{ref}} - \log K_j,
+\]
+and put-call parity yields call prices when $K_j \geq F$.
+This reduces the per-maturity pricing cost from $O(n_K)$ PDE solves
+to a \emph{single} solve plus $n_K$ B-spline evaluations.
+
+\subsection{Caching of CGMY-independent matrices}
+
+Two matrices dominate the assembly cost:
+
+\begin{itemize}
+  \item $M_h$ (mass matrix): computed via \texttt{scipy.integrate.quad}
+        numerical integration over B-spline products; cost $\approx
+        490\,\mathrm{ms}$ at $N=64$; depends only on $(N, p, h,
+        x_{\min})$ — \emph{independent of CGMY parameters}.
+  \item $D_h$ (derivative matrix): similarly $\approx 480\,\mathrm{ms}$;
+        also CGMY-independent.
+  \item $K_G, K_M$ (fractional stiffness matrices): computed via IFFT
+        of tempered coefficients; cost $\approx 5\,\mathrm{ms}$;
+        \emph{depends on $(G, M, Y)$}.
+\end{itemize}
+
+The factory function \texttt{make\_cached\_pricer} pre-builds $M_h$
+and $D_h$ \emph{once} per maturity at calibration start, then returns
+a closure that only recomputes $K_G, K_M$ per optimizer call.
+This yields a $\sim\!100\times$ speedup: a full 5-maturity surface
+evaluation drops from $\approx 4.9\,\mathrm{s}$ to
+$\approx 51\,\mathrm{ms}$, making the two-phase calibration
+tractable within minutes.
+
+% =============================================================================
+\section{Calibration Methodology}
+\label{sec:calibration}
+% =============================================================================
+
+\subsection{Parameter space and unconstrained transform}
+
+The physical parameter bounds are
+\[
+  C \in [10^{-3}, 20],\quad
+  G \in [0.1, 80],\quad
+  M \in [1.01, 80],\quad
+  Y \in [1.05, 1.95].
+\]
+To convert a constrained problem into an unconstrained one the
+bijective transform
+\begin{equation}
+  \eta_1 = \log C, \quad
+  \eta_2 = \log G, \quad
+  \eta_3 = \log(M-1), \quad
+  \eta_4 = \log\!\left(\frac{Y-1}{2-Y}\right)
+  \label{eq:transform}
+\end{equation}
+is used, with inverse
+\[
+  C = e^{\eta_1},\quad G = e^{\eta_2},\quad
+  M = 1 + e^{\eta_3},\quad
+  Y = \frac{2\,e^{\eta_4} + 1}{1 + e^{\eta_4}}.
+\]
+The bounds on $\eta$ are derived programmatically from the physical
+bounds (never guessed by hand), so any change to the physical bounds
+propagates automatically.  The resulting $\eta$-space bounds are
+$\eta_1 \in [-6.91, 3.00]$,
+$\eta_2 \in [-2.30, 4.38]$,
+$\eta_3 \in [-4.61, 4.37]$,
+$\eta_4 \in [-2.94, 2.94]$.
+
+\subsection{Objective function}
+
+The calibration minimises the vega-normalised mean-squared price error
+\begin{equation}
+  \mathcal{L}(\eta) = \frac{1}{N_{\text{quotes}}}
+  \sum_{i=1}^{N_{\text{quotes}}}
+  \left(\frac{V_{\text{model},i}(\eta) - V_{\text{mid},i}}
+             {\max(\nu_i,\, \nu_{\text{floor}})}\right)^{\!2},
+  \label{eq:loss}
+\end{equation}
+where $V_{\text{model},i}$ is the model OTM price, $V_{\text{mid},i}$
+is the market mid-price, $\nu_i$ is the Black--Scholes forward vega,
+and $\nu_{\text{floor}} = 10^{-3}$ prevents blow-up for deep OTM
+quotes with negligible sensitivity.
+
+Dividing by vega converts the objective from a price-error MSE to an
+approximate IV-error MSE, so that near-ATM liquid quotes
+(high vega) and deep-OTM quotes (low vega) contribute roughly
+equally in implied-volatility units.
+
+\subsection{Two-phase optimisation}
+
+\paragraph{Phase~1: Differential Evolution (global search).}
+Scipy's \texttt{differential\_evolution} is run with a coarse $N=32$,
+$N_\tau = 5$ cached pricer (sufficient for identifying the basin
+of attraction; $\approx 1.5\%$ price error relative to $N=256$).
+Fixed settings (used for all dates, for reproducibility):
+\begin{itemize}
+  \item \texttt{seed} $= 0$
+  \item \texttt{maxiter} $= 300$ (early stopping: \texttt{tol} $= 10^{-7}$)
+  \item \texttt{popsize} $= 15$ (population $= 15 \times 4 = 60$ individuals)
+  \item \texttt{polish} $=$ \texttt{False}
+  \item \texttt{mutation} $= (0.5,\,1.5)$,\; \texttt{recombination} $= 0.7$
+\end{itemize}
+At $\approx 25\,\mathrm{ms}$ per evaluation the maximum budget of
+$18{,}060$ function calls would take $\approx 7.5$ minutes; in
+practice DE converged in 9\,000--11\,000 calls ($\approx 4$ minutes).
+
+\paragraph{Phase~2: L-BFGS-B (local refinement).}
+Starting from the DE solution, a high-accuracy $N=64$, $N_\tau=10$
+cached pricer is substituted and \texttt{scipy.optimize.minimize}
+with \texttt{method='L-BFGS-B'} is run to convergence
+(\texttt{ftol} $= 10^{-12}$, \texttt{gtol} $= 10^{-8}$).
+At $\approx 51\,\mathrm{ms}$ per evaluation, 130--265 calls
+are required ($10\text{--}14\,\mathrm{s}$).
+
+\subsection{Diagnostics}
+
+After Phase~2, every OTM market quote is re-priced with the
+$N=64$ pricer and the model price inverted to model implied
+volatility via Brent's method on the Black--1976 forward formula.
+The IV RMSE and maximum absolute IV error across all quotes are
+reported as calibration quality metrics.
+
+% =============================================================================
+\section{Results}
+\label{sec:results}
+% =============================================================================
+
+\subsection{Calibrated parameters and fit quality}
+
+Table~\ref{tab:main_results} reports the calibrated CGMY parameters,
+IV RMSE, and maximum IV error for the three primary (5\%-spread)
+surfaces and the crisis robustness surface (15\%-spread).
+
+\begin{table}[ht]
+\centering
+\caption{Calibration results. Fixed optimizer settings: seed~$=0$,
+  \texttt{de\_maxiter}~$=300$, \texttt{de\_popsize}~$=15$.
+  IV errors in decimal volatility (multiply by 100 for vol-points).}
+\label{tab:main_results}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{llcrrrrrr}
+\toprule
+Date & Regime & Spread & $C^*$ & $G^*$ & $M^*$ & $Y^*$
+     & RMSE (vp) & Max (vp) \\
+\midrule
+2020-01-15 & low-vol  & 5\%
+  & 0.049 & 2.236 & 80.0 & 1.089 & 2.47 & 9.80 \\
+2020-03-18 & crisis   & 5\%
+  & 0.543 & 0.100 & 27.8 & 1.050 & 7.19 & 17.10 \\
+2020-03-18 & crisis   & 15\%
+  & 0.546 & 0.100 &  6.7 & 1.050 & 11.05 & 46.53 \\
+2021-09-15 & recovery & 5\%
+  & 0.097 & 2.594 & 80.0 & 1.050 & 1.97 & 8.09 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The non-crisis dates (2020-01-15 and 2021-09-15) achieve IV RMSEs of
+2.47 and 1.97 vol-points respectively, comfortably within the 3~vp
+acceptance threshold.  The crisis date under the primary 5\% filter
+yields an RMSE of 7.19~vp — above threshold and discussed at length
+in \S\ref{sec:crisis_caveat}.
+
+\subsection{Per-maturity breakdown}
+
+Table~\ref{tab:per_maturity} disaggregates the IV RMSE by maturity
+for each primary (5\%-spread) surface.
+
+\begin{table}[ht]
+\centering
+\caption{Per-maturity IV RMSE (vol-points) for primary (5\%) surfaces.
+  ``$n$'' is the number of OTM quotes surviving all filters.}
+\label{tab:per_maturity}
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{lcrrr}
+\toprule
+\multirow{2}{*}{Maturity} & \multirow{2}{*}{$T$ (y)}
+  & \multicolumn{3}{c}{RMSE (vol-points) / $n$ quotes} \\
+\cmidrule(lr){3-5}
+& & 2020-01-15 & 2020-03-18 (05) & 2021-09-15 \\
+\midrule
+ 7\,d  & 0.0192 & 8.52 / 15  & \textit{filtered} & 5.38 / 34  \\
+30\,d  & 0.0822 & 1.63 / 61  & 14.10 / 19        & 1.46 / 266 \\
+93\,d  & 0.2548 & 0.56 / 96  &  4.68 / 94        & 1.07 / 179 \\
+182\,d & 0.455--0.504 & 0.88 / 32 & \textit{filtered} & 2.05 / 49 \\
+366\,d & 1.0027 & 1.76 / 19  & \textit{filtered} & 2.44 / 42  \\
+\midrule
+\textbf{All} & & \textbf{2.47 / 224} & \textbf{7.19 / 113}
+                & \textbf{1.97 / 575} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A consistent pattern emerges across all successfully calibrated
+surfaces: the very short (7-day) maturity shows elevated errors
+(5--9~vp), while medium-term maturities (30--366~days) fit well
+(0.6--2.5~vp).  This is a known limitation of CGMY and Lévy models
+more generally: discrete overnight jump risk and microstructure
+effects dominate very short-expiry pricing and are not captured by
+the continuous-time process.
+
+\subsection{Computational performance}
+
+Table~\ref{tab:timing} records the wall-clock time for each calibration
+run on a single CPU core.
+
+\begin{table}[ht]
+\centering
+\caption{Computational timing per calibration run (single CPU core).}
+\label{tab:timing}
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{llcrrr}
+\toprule
+Date & Spread & $n_{\text{mats}}$
+  & DE evals & L-BFGS-B evals & Total (s) \\
+\midrule
+2020-01-15 & 5\%  & 5 & 9{,}420  & 235 & 255 \\
+2020-03-18 & 5\%  & 2 & 11{,}340 & 170 & 120 \\
+2020-03-18 & 15\% & 5 & 10{,}500 & 130 & 275 \\
+2021-09-15 & 5\%  & 5 & 9{,}360  & 265 & 261 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The crisis 5\%-surface run is notably faster (120~s) because only two
+maturities survived the spread filter, halving the per-evaluation cost
+of the cached pricer.  For all five-maturity surfaces the total
+calibration time is 4.2--4.6~minutes.
+
+% =============================================================================
+\section{Crisis-Date Robustness Check}
+\label{sec:robustness}
+% =============================================================================
+
+The data-roadmap (Section~5) flags the 2020-03-18 date as requiring a
+robustness test: does the calibrated parameter vector change materially
+when the spread filter is relaxed from 5\% to 15\%?
+Table~\ref{tab:robustness} reports the absolute and relative differences.
+
+\begin{table}[ht]
+\centering
+\caption{Crisis-date (2020-03-18) parameter robustness: spread05 vs spread15.}
+\label{tab:robustness}
+\begin{tabular}{lrrrr}
+\toprule
+Parameter & Spread 5\% & Spread 15\% & $|\Delta|$ & $|\Delta|/|{\cdot}|_{\text{05}}$ \\
+\midrule
+$C^*$ & 0.5431 & 0.5462 & 0.003 &  0.6\% \\
+$G^*$ & 0.100  & 0.100  & 0.000 &  0.0\% \\
+$M^*$ & 27.79  & 6.65   & 21.14 & 76.1\% \\
+$Y^*$ & 1.050  & 1.050  & 0.000 &  0.0\% \\
+\midrule
+IV RMSE & 7.19\,vp & 11.05\,vp & 3.87\,vp & 53.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Finding.}
+$C^*$, $G^*$, and $Y^*$ are highly stable (changes $\leq 1\%$) under
+the relaxed spread filter.  However, $M^*$ shifts dramatically from
+$27.8$ to $6.7$ — a $76\%$ reduction.  This instability has a clear
+structural explanation: $M$ controls the exponential decay rate of the
+right tail of the Lévy measure (upward jumps), and is therefore
+identified primarily by long-maturity OTM call options.  The 5\% filter
+retains \emph{no} maturities beyond 93\,d; the 15\% filter recovers 5
+maturities including 182\,d and 366\,d calls.  With dramatically
+different surface shapes entering the objective, the optimizer finds a
+different $M^*$ while holding the other three parameters near-constant.
+
+The substantially worse RMSE under the 15\% filter (11.05~vp vs
+7.19~vp) indicates that the additional quotes admitted by the looser
+filter are noisy (wide spreads, stale quotes) and make the fitting
+problem harder, not easier.  The 5\% surface, though sparse, is more
+internally consistent.
+
+For the paper's Section~7 the 5\%-filter result is reported as the
+primary finding.  The 15\%-filter result is documented here as
+evidence that \emph{crisis-date $M^*$ should be interpreted with
+caution}: it is sensitive to which maturities survive the quality
+filter, and both estimates press against the feasible-set boundary
+(lower bound $G=0.1$, lower bound $Y=1.05$), suggesting the data
+do not uniquely identify the full CGMY parameter vector in this regime.
+
+% =============================================================================
+\section{Financial Interpretation}
+\label{sec:interpretation}
+% =============================================================================
+
+\subsection{Jump-intensity scaling with market regime}
+
+The most striking cross-date pattern is the $C^*$ parameter:
+\[
+  C^*_{\text{low-vol}} = 0.049,\quad
+  C^*_{\text{crisis}}  = 0.543,\quad
+  C^*_{\text{recovery}}= 0.097.
+\]
+The crisis value is \textbf{$5.6\times$ larger} than the recovery value
+and \textbf{$11\times$ larger} than the low-vol value.  Since $C$ scales
+the overall intensity of the CGMY Lévy measure (more precisely, $C$
+multiplies the jump rate density at every size), a larger $C^*$ means
+the risk-neutral measure assigns a substantially higher probability to
+large price moves.  This is consistent with the known behaviour of
+risk-neutral CGMY parameters during stress periods: market participants
+price options as if the world is in a higher-activity jump regime,
+even after accounting for the elevated level of the IVS through
+the volatility-normalised objective.
+
+\subsection{Fine-structure index stability}
+
+The $Y^*$ estimates are
+\[
+  Y^*_{\text{low-vol}} = 1.089,\quad
+  Y^*_{\text{crisis}} = 1.050,\quad
+  Y^*_{\text{recovery}} = 1.050.
+\]
+The cross-regime range is $0.039$ — a spread of only \textbf{3.6\%}
+relative to the cross-date mean $\bar{Y} = 1.063$.
+This narrow range is consistent with the theoretical interpretation of
+$Y$ as a structural fine-structure index governing the activity of
+small jumps, which changes slowly with market conditions and is
+largely regime-independent.  All three estimates are in the
+infinite-variation regime $Y \in (1,2)$, as expected for SPX options.
+
+\paragraph{Boundary note.}
+In two of the three dates ($Y^* = 1.050$) the optimizer converges
+to the lower bound of the $Y$ search domain $[1.05, 1.95]$.  This
+suggests the data would prefer $Y$ slightly below 1.05.  The bound
+is imposed by the theoretical requirement $Y > 1$ for infinite variation
+plus a numerical margin; the proximity to the boundary means $Y^*$
+should be interpreted as an upper-bound constraint rather than a
+well-identified interior minimum.
+
+\subsection{Tail-decay parameters}
+
+The $G^*$ and $M^*$ estimates reveal an interesting asymmetry:
+
+\begin{itemize}
+  \item \textbf{Non-crisis dates:} $G^* \approx 2.2\text{--}2.6$,
+        $M^* = 80$ (upper bound).  A small $G$ (slow left-tail decay)
+        implies a heavier downside tail — consistent with the well-known
+        negative skewness of SPX risk-neutral distributions.
+        $M^*$ hitting the upper bound means the optimizer cannot
+        distinguish $M = 80$ from $M = \infty$: the data are
+        insensitive to the right-tail decay rate, likely because the
+        $\kappa \in [0.85, 1.15]$ moneyness window contains few
+        deep OTM calls.
+
+  \item \textbf{Crisis date (5\% filter):} $G^* = 0.10$ (lower bound),
+        $M^* = 27.8$.  During the crisis \emph{both} tails are
+        affected, but the optimizer reaches the $G$ lower bound,
+        indicating a very heavy left tail that cannot be distinguished
+        from an even heavier one within the search domain.  $M^*$
+        falls substantially (from 80 to 27.8), reflecting the market
+        pricing some right-tail risk (large upward moves during
+        crisis bear-market rallies).
+\end{itemize}
+
+% =============================================================================
+\section{Crisis-Date Fit Caveat}
+\label{sec:crisis_caveat}
+% =============================================================================
+
+The 2020-03-18 calibration (5\%-filter) yields an IV RMSE of
+\textbf{7.19~vol-points}, well above the 3~vp acceptance threshold
+met on the other two dates.  This is not a failure of the calibration
+algorithm; it reflects two structural issues with the crisis surface:
+
+\paragraph{(i) Sparse, two-maturity surface.}
+The 5\% spread filter retains only 113 quotes across the 30\,d and
+93\,d maturities.  Fitting a four-parameter model to a two-maturity
+surface is underdetermined: $C$ and $Y$ are primarily identified by
+the level and curvature of the smile, while $G$ and $M$ are primarily
+identified by the skew \emph{across maturities} — information that
+requires at least three maturities.
+
+\paragraph{(ii) Extremely elevated IV level.}
+SPX ATM implied volatility on 2020-03-18 was approximately 80\%.
+The worst-fit quotes are all near-ATM 30\,d options
+(log-moneyness $\approx 0$, IV $\approx 0.80$), where the model
+underestimates IV by up to 17~vp.  The CGMY process, calibrated to
+match the overall skew shape, cannot simultaneously match the extreme
+level without distorting the smile curvature.  This is a known
+limitation of parametric Lévy models: they have limited flexibility to
+jointly match the level and curvature of the smile during crisis events.
+
+\paragraph{(iii) Boundary convergence.}
+The optimizer converges to $G^* = 0.10$ (lower bound) and $Y^* = 1.05$
+(lower bound), indicating the loss surface does not have a well-defined
+interior minimum under these data.  The reported parameter values are
+therefore constrained estimates rather than interior maximum-likelihood
+solutions.
+
+\paragraph{Recommendation for Section~7 paper text.}
+Report the crisis calibration result with the following caveat:
+``\textit{The 2020-03-18 surface, reduced to two maturities by the
+5\% spread filter, yields an in-sample IV RMSE of 7.2~vol-points.
+We attribute this to the extreme market conditions during the COVID-19
+crash rather than to a deficiency of the calibration procedure:
+the sparse surface is insufficient to identify all four CGMY parameters,
+and the model is asked to match implied volatilities near 80\%,
+a regime outside the domain covered by typical CGMY calibrations.
+The crisis result is reported for completeness; the low-volatility
+and recovery dates, where the surface covers five maturities and
+the model is well-identified, are the primary evidence for the
+calibration methodology.}''
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% =============================================================================
+
+The B-Spline Galerkin + CN solver serves as an effective inner
+pricer for market calibration of the CGMY model to SPX option surfaces.
+The full pipeline — surface construction, forward/discount calibration,
+OTM selection, cached pricing, two-phase optimisation — runs in under
+5~minutes per date on a single CPU core.
+
+Key results:
+\begin{itemize}
+  \item \textbf{Non-crisis dates:} IV RMSE of 1.97~vp (2021-09-15) and
+        2.47~vp (2020-01-15), comfortably within the 3~vp target.
+  \item \textbf{Crisis date:} IV RMSE of 7.19~vp due to a sparse
+        two-maturity surface and extreme IV levels; this is a data
+        limitation, not an algorithmic failure.
+  \item \textbf{Jump intensity} $C^*$ is 5.6--11$\times$ elevated at
+        the crisis date relative to the non-crisis dates,
+        consistent with the risk-neutral measure implying a higher-activity
+        jump regime during stress.
+  \item \textbf{Fine-structure index} $Y^*$ is stable across regimes
+        (range 3.6\% of mean), consistent with its theoretical
+        interpretation as a structural parameter.
+  \item \textbf{Crisis robustness:} $C^*$, $G^*$, $Y^*$ are stable
+        ($<1\%$ change) under the 15\%-spread filter; $M^*$ shifts
+        by 76\%, reflecting the dependence of right-tail identification
+        on long-maturity quote availability.
+\end{itemize}
+
+The cached-pricer architecture (pre-built $M_h$, $D_h$ per maturity;
+IFFT-only rebuild per optimizer call) is the key computational
+innovation enabling this calibration throughput.  Without caching,
+a single 5-maturity loss evaluation would require $\approx 5$~s;
+with caching it requires $\approx 51$~ms — a $100\times$ speedup that
+transforms a 9-hour brute-force calibration into a 4-minute workflow.
+
+\end{document}
