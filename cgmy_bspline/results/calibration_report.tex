@@ -629,6 +629,143 @@ the model is well-identified, are the primary evidence for the
 calibration methodology.}''
 
 % =============================================================================
+\section{Grünwald–Letnikov Benchmark}
+\label{sec:gl_benchmark}
+% =============================================================================
+
+To quantify the calibration-speed advantage of the B-Spline Galerkin scheme,
+we run an accuracy-matched speed comparison against a
+Gr\"{u}nwald--Letnikov (GL) finite-difference solver on the
+2020-03-18 crisis surface.
+
+\subsection{GL solver}
+
+The GL scheme discretises the same backward FPDE on a uniform log-price
+grid using tempered Gr\"{u}nwald--Letnikov weights (the $p=0$ version of
+the tempered symbol, without the B-spline hat function) and
+Crank--Nicolson time-stepping.  The spatial accuracy is $O(h)$ compared
+to $O(h^{p-Y/2}) \approx O(h^{2.5})$ for the B-spline scheme at $p=3$,
+$Y=1.05$.  The GL operator matrix is dense (lower + upper Toeplitz sum)
+and is assembled each call via vectorised \texttt{numpy} operations;
+LU factorisation uses \texttt{scipy.linalg.lu\_factor} with no
+pre-build step.
+
+\subsection{Accuracy diagnostic}
+
+At the crisis calibrated parameters ($C=0.543$, $G=0.1$, $M=27.8$, $Y=1.05$),
+the GL pricer's maximum relative pricing error versus a high-resolution
+reference is:
+
+\begin{table}[ht]
+\centering
+\caption{GL pricing accuracy at crisis parameters ($G=0.1$, $Y=1.05$).}
+\label{tab:gl_accuracy}
+\begin{tabular}{cc}
+\toprule
+$N$ & Max.\ relative error \\
+\midrule
+ 32 & 83.84\% \\
+ 64 &  5.94\% \\
+128 &  2.68\% \\
+256 &  1.74\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The large error at $N=32$ arises because $G=0.1$ implies nearly
+un-tempered left jumps that decay as $e^{-0.1\,kh}$ per lag $k$;
+at $h = 4/32 = 0.125$ the factor is $0.988$ per step, so $N=32$
+grid points capture less than $34\%$ of the total left-tail weight.
+At $N=32$ the DE optimizer cannot distinguish the true minimum
+($G=0.1$, $Y=1.05$) from a spurious flat region ($G=80$, $Y=1.95$).
+At $N=64$ the error drops to $5.94\%$, sufficient for the optimizer
+to converge to the correct basin.
+
+\subsection{Accuracy-matched comparison}
+
+We compare the two methods at grid sizes chosen so that both achieve
+similar pricing accuracy on the crisis surface:
+
+\begin{itemize}
+  \item \textbf{B-Spline:} $N_{\text{DE}}=32$,\ $N_{\text{L-BFGS}}=64$
+        (standard paper settings; $<1\%$ error at $N=32$).
+  \item \textbf{GL:} $N_{\text{DE}}=64$,\ $N_{\text{L-BFGS}}=128$
+        (accuracy-matched; $\sim6\%$ and $\sim3\%$ error respectively).
+\end{itemize}
+
+All optimizer hyper-parameters are identical:
+\texttt{seed}=0, \texttt{de\_maxiter}=300, \texttt{de\_popsize}=15,
+\texttt{tol}=1e-7, \texttt{mutation}=(0.5,~1.5), \texttt{recombination}=0.7.
+
+\begin{table}[ht]
+\centering
+\caption{Accuracy-matched GL benchmark on 2020-03-18 (crisis) surface.
+         Optimizer settings identical for both methods.}
+\label{tab:gl_benchmark}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccccrr}
+\toprule
+Method & $N_{\text{DE}}$ & $N_{\text{L-BFGS}}$ &
+  $C^*$ & $G^*$ & $Y^*$ & IV RMSE & Total (s) \\
+\midrule
+B-Spline Galerkin & 32  &  64 & 0.543 & 0.100 & 1.050 & 7.19\,vp & 115 \\
+GL finite-diff.   & 64  & 128 & 0.582 & 0.100 & 1.050 & 6.66\,vp &  20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both methods converge to the same economic region:
+$G^*=0.100$, $Y^*=1.050$ (exact agreement), $C^*$ within 7.2\%.
+The $M^*$ parameter disagrees (27.8 vs.\ 43.4) but this is a known
+identification degeneracy: with only two maturities the crisis surface
+provides insufficient constraint on $M$ (confirmed by the B-spline
+returning $M^*=27.8$ at 5\% spread vs.\ $M^*=6.7$ at 15\% spread
+on the same date; see Section~\ref{sec:robustness}).
+
+\subsection{Speed ratio}
+
+\[
+  \alpha \;=\; \frac{T_{\text{GL}}}{T_{\text{B-Spline}}}
+           \;=\; \frac{20\,\text{s}}{115\,\text{s}}
+           \;=\; 0.17
+\]
+
+GL calibration completes in $\mathbf{20}$~\textbf{s} versus
+$\mathbf{115}$~\textbf{s} for the B-spline, a \textbf{5.8$\times$
+wall-time advantage for GL} at these accuracy levels.
+
+\paragraph{Drivers of the GL speedup.}
+\begin{enumerate}
+  \item \textbf{Zero pre-build cost.}  The B-spline requires a
+        5-second pre-build (two cached \texttt{scipy.quad} integrals
+        per maturity for $M_h$, $D_h$), which amortises over many
+        evaluations but adds fixed overhead.  GL has no pre-build step.
+  \item \textbf{Cheaper per-evaluation.}  GL at $N_{\text{DE}}=64$
+        costs 1.4~ms per evaluation (two maturities) vs.\
+        9.7~ms for the B-spline at $N_{\text{DE}}=32$ — a $6.7\times$
+        per-call advantage.  The GL matrix build is $O(N^2)$ vectorised
+        \texttt{numpy}; the B-spline involves IFFT calls and cached
+        Toeplitz matrix--vector products.
+  \item \textbf{Grid-size ratio only $2\times$.}  Because $O(h)$
+        convergence requires $N_{\text{GL}} = 2\,N_{\text{BS}}$
+        in this regime, and not a larger multiple, the $6.7\times$
+        per-eval advantage is only partially offset.
+\end{enumerate}
+
+\paragraph{B-Spline's accuracy advantage.}
+The B-Spline scheme retains a decisive edge in pricing accuracy
+per grid point: $O(h^{2.5})$ vs.\ $O(h)$.
+For high-accuracy applications (e.g.\ pricing exotic products to
+$0.1$\,vp tolerance) the B-spline would require $N \approx 64$
+where GL would need $N \geq 1024$, making GL's per-eval cost
+$(1024/64)^3 \approx 4096\times$ more expensive and its total
+calibration time orders of magnitude slower.
+The 5.8$\times$ GL advantage reported here applies specifically
+to the moderate-accuracy calibration regime ($\approx 5$\,vp IV RMSE)
+and the particular cost structure of this implementation
+(scipy.quad-based B-spline pre-build vs.\ LAPACK-LU GL).
+
+% =============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 % =============================================================================
