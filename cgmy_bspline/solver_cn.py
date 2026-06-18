@@ -57,7 +57,7 @@ def manufactured_source_discrete(x_nodes, tau, params, N, p, h, x_min,
     return (A_h - params.r * M_h) @ c_exact
 
 
-def solve_cn(params, N, p, N_tau, bandwidth=64, mode='banded', manufactured=False, nu=1.5):
+def solve_cn(params, N, p, N_tau, bandwidth=64, mode='banded', manufactured=False, nu=1.5, grid=None):
     """
     Crank-Nicolson B-spline Galerkin solver for the CGMY FPDE.
 
@@ -77,6 +77,9 @@ def solve_cn(params, N, p, N_tau, bandwidth=64, mode='banded', manufactured=Fals
                    'toeplitz_precond' -- same but with banded LU preconditioner
     manufactured : if True, add manufactured-solution source term
     nu           : exponent for manufactured solution (requires nu > Y/2)
+    grid         : optional pre-built grid dict (from make_grid or make_grid_manual).
+                   When provided, overrides the default make_grid(params, N) call so
+                   callers can supply a custom spatial domain without modifying params.
 
     Returns
     -------
@@ -90,7 +93,8 @@ def solve_cn(params, N, p, N_tau, bandwidth=64, mode='banded', manufactured=Fals
     """
     t_start = time.time()
 
-    g = grid_module.make_grid(params, N)
+    g = grid if grid is not None else grid_module.make_grid(params, N)
+    N = g['N']
     x_min, x_max, h = g['x_min'], g['x_max'], g['h']
     x_nodes = g['nodes']
     n_dof = N + p - 1
