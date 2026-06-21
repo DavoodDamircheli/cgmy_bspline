@@ -1,0 +1,91 @@
+====================================================================================================
+Domain-truncation diagnostic at T=1.0y
+Current production domain half-width = 2.0, widened (x1.5) = 3.0
+IV tolerance (from calibration_report.tex '3 vp target/acceptance threshold') = 3.0 vp
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+Date: 2020-01-15
+----------------------------------------------------------------------------------------------------
+  theta = (C=0.048815, G=2.236036, M=80.000000, Y=1.088636)
+  [1] Theoretical truncation order of magnitude at half_width=2.0:
+      eps_left  = exp(-G*2.0) = 0.011424
+      eps_right = exp(-M*2.0) = 0.000000
+      eps = max(eps_left, eps_right) = 0.011424  (small)
+
+  [2] Empirical re-solve at T=1.0y: current domain vs widened domain vs COS
+      strikes: [3128.46, 3293.12, 3457.77]
+      IV(current domain, hw=2.0): [14.004, 12.744, 11.509] (vp)
+      IV(wide domain,    hw=3.0): [14.061, 12.583, 11.513] (vp)
+      IV(COS benchmark)              : [14.026, 12.727, 11.547] (vp)
+      |current - wide| (vp): [0.058, 0.161, 0.005]
+      |current - COS|  (vp): [0.022, 0.017, 0.038]
+      |wide - COS|     (vp): [0.035, 0.144, 0.034]
+      max|current-wide| = 0.161 vp
+
+----------------------------------------------------------------------------------------------------
+Date: 2020-03-18
+----------------------------------------------------------------------------------------------------
+  theta = (C=0.543129, G=0.100000, M=27.794744, Y=1.050000)
+  [1] Theoretical truncation order of magnitude at half_width=2.0:
+      eps_left  = exp(-G*2.0) = 0.818731
+      eps_right = exp(-M*2.0) = 0.000000
+      eps = max(eps_left, eps_right) = 0.818731  (LARGE (>0.1))
+
+  [2] Empirical re-solve at T=1.0y: current domain vs widened domain vs COS
+      strikes: [2232.63, 2350.14, 2467.64]
+      IV(current domain, hw=2.0): [59.115, 56.32, 53.59] (vp)
+      IV(wide domain,    hw=3.0): [73.729, 71.922, 70.176] (vp)
+      IV(COS benchmark)              : [98.298, 97.109, 95.978] (vp)
+      |current - wide| (vp): [14.614, 15.602, 16.587]
+      |current - COS|  (vp): [39.182, 40.788, 42.389]
+      |wide - COS|     (vp): [24.568, 25.186, 25.802]
+      max|current-wide| = 16.587 vp
+
+----------------------------------------------------------------------------------------------------
+Date: 2021-09-15
+----------------------------------------------------------------------------------------------------
+  theta = (C=0.096545, G=2.594096, M=80.000000, Y=1.050000)
+  [1] Theoretical truncation order of magnitude at half_width=2.0:
+      eps_left  = exp(-G*2.0) = 0.005582
+      eps_right = exp(-M*2.0) = 0.000000
+      eps = max(eps_left, eps_right) = 0.005582  (small)
+
+  [2] Empirical re-solve at T=1.0y: current domain vs widened domain vs COS
+      strikes: [4262.17, 4486.49, 4710.82]
+      IV(current domain, hw=2.0): [18.023, 17.042, 16.009] (vp)
+      IV(wide domain,    hw=3.0): [18.09, 16.983, 15.995] (vp)
+      IV(COS benchmark)              : [18.07, 17.011, 16.027] (vp)
+      |current - wide| (vp): [0.066, 0.059, 0.015]
+      |current - COS|  (vp): [0.047, 0.031, 0.017]
+      |wide - COS|     (vp): [0.02, 0.028, 0.032]
+      max|current-wide| = 0.066 vp
+
+====================================================================================================
+[3] Calibrated theta side by side
+====================================================================================================
+        date          C*          G*          M*        Y*    min(G,M)
+----------------------------------------------------------------------
+  2020-01-15      0.0488      2.2360     80.0000    1.0886      2.2360
+  2020-03-18      0.5431      0.1000     27.7947    1.0500      0.1000
+  2021-09-15      0.0965      2.5941     80.0000    1.0500      2.5941
+
+The crisis date (2020-03-18) has G*=0.10, dramatically smaller than
+the other two dates' G* (2.24, 2.59) -- a much heavier/slower-decaying
+left tail in log-price space. M* is comparable (or larger) across all
+three. min(G,M) is the relevant (slower-decaying, more dangerous) rate
+for the fixed domain: 0.10 for crisis vs 2.24/2.59 for the other dates
+-- the same mechanism identified in debug_short_maturity.py's local-
+refinement test, now checked specifically at T=1y.
+
+====================================================================================================
+SELF-TEST: domain-truncation verdict per date
+====================================================================================================
+        date   theory eps    max|cur-wide| (vp)   tolerance (vp)           verdict
+----------------------------------------------------------------------------------
+  2020-01-15       0.0114                 0.161              3.0     NOT CONFIRMED
+    -> current-domain and wide-domain IVs agree within 3.0 vp (diff=0.161 vp); any 1y pricing error for 2020-01-15 is NOT explained by domain truncation at this half-width and must come from elsewhere (e.g. spatial under-resolution near the kink at short maturities does not apply at T=1y; possible candidates: Nt=10 CN time-stepping accuracy, bandwidth truncation, or the calibration optimizer's own fit residual).
+  2020-03-18       0.8187                16.587              3.0         CONFIRMED
+    -> current-domain IV at T=1y differs from wide-domain IV by more than the 3.0 vp tolerance, AND the theoretical tail-decay factor eps=0.8187 at half_width=2.0 predicts a leak of this order of magnitude (eps > 0.05) given this date's min(G,M). Domain truncation is a credible cause for this date's T=1y error.
+  2021-09-15       0.0056                 0.066              3.0     NOT CONFIRMED
+    -> current-domain and wide-domain IVs agree within 3.0 vp (diff=0.066 vp); any 1y pricing error for 2021-09-15 is NOT explained by domain truncation at this half-width and must come from elsewhere (e.g. spatial under-resolution near the kink at short maturities does not apply at T=1y; possible candidates: Nt=10 CN time-stepping accuracy, bandwidth truncation, or the calibration optimizer's own fit residual).

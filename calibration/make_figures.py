@@ -89,15 +89,96 @@ def _load_calibrated_params() -> dict:
     return out
 
 
+# ── Step 1b: spread-filter fallback for tenors missing under the primary filter
+
+def _tenor_col(T: float) -> int | None:
+    """Map a maturity T (years) to a column index 0..4, or None."""
+    for col_idx, (_, lo, hi) in enumerate(_TENORS):
+        if lo <= T <= hi:
+            return col_idx
+    return None
+
+
+def _loose_csv_name(primary_csv_name: str) -> str:
+    return primary_csv_name.replace("spread05", "spread15")
+
+
+def _augment_with_fallback(surface: dict, S0: float, rates: dict, date_str: str,
+                            primary_csv_name: str):
+    """
+    For nominal tenors with zero rows under the primary (5%) spread filter,
+    pull them from the looser (15%) variant instead of leaving the panel
+    blank -- per D2 (debug_data_survival.py), the missing crisis maturities
+    are a spread-filter/moneyness-selection artifact, not a calendar/
+    listed-expiry gap, and the looser variant already exists in this
+    pipeline (calibration_results.csv has a spread_filter="15" row too).
+
+    Does NOT change the default filter for dates/maturities that already
+    have data; only fills genuine gaps, and reports which tenors were
+    filled so the figure can label them.
+
+    The borrowed maturity's (F, D) are taken from the loose surface as-is
+    (its own parity fit), but q_eff is recomputed against THIS function's
+    S0 (the primary surface's homogeneity anchor) rather than reusing the
+    loose surface's own S0, so every maturity in the returned dict shares
+    one consistent S0 reference.
+
+    Returns (surface_aug, rates_aug, fallback_tenor_labels).
+    """
+    present_cols = set()
+    for df_mat in surface.values():
+        col = _tenor_col(float(df_mat["T"].iloc[0]))
+        if col is not None:
+            present_cols.add(col)
+    missing_cols = set(range(len(_TENORS))) - present_cols
+
+    if not missing_cols:
+        return surface, rates, []
+
+    loose_path = DATA_DIR / _loose_csv_name(primary_csv_name)
+    if not loose_path.exists():
+        return surface, rates, []
+
+    surface_loose, _, _ = _load_surface(str(loose_path))
+
+    surface_aug = dict(surface)
+    rates_aug   = dict(rates)
+    fallback_labels = []
+
+    for exdate, df_mat in surface_loose.items():
+        if not missing_cols:
+            break
+        T = float(df_mat["T"].iloc[0])
+        col = _tenor_col(T)
+        if col is None or col not in missing_cols or exdate in surface_aug:
+            continue
+
+        F = float(df_mat["F"].iloc[0])
+        D = float(df_mat["D"].iloc[0])
+        r_eff = -math.log(D) / T
+        q_eff = r_eff - math.log(F / S0) / T
+
+        surface_aug[exdate] = df_mat
+        rates_aug[round(T, 6)] = (r_eff, q_eff)
+        fallback_labels.append(_TENORS[col][0])
+        missing_cols.discard(col)
+
+    return surface_aug, rates_aug, fallback_labels
+
+
 # ── Step 2: compute per-date diagnostic DataFrames ───────────────────────────
 
 def _build_diagnostics() -> dict:
     """
     For each date load the surface CSV, build an N=64 cached pricer, evaluate
-    the calibrated theta, and return a dict {date_str: df_diag}.
+    the calibrated theta, and return a dict
+    {date_str: (row_label, df_diag, fallback_tenor_labels)}.
 
     df_diag columns: date, T, K, log_moneyness, market_iv, model_iv, abs_err
     (IVs in decimal, matching the surface CSV convention).
+    fallback_tenor_labels lists which nominal tenors (e.g. "1w") had zero
+    rows under the primary 5% spread filter and were filled from the 15%
+    variant instead (see _augment_with_fallback / D2).
     """
     params = _load_calibrated_params()
     diags  = {}
@@ -107,6 +188,24 @@ def _build_diagnostics() -> dict:
         csv_path = DATA_DIR / csv_name
         surface, S0, rates = _load_surface(str(csv_path))
 
+        surface, rates, fallback_labels = _augment_with_fallback(
+            surface, S0, rates, date_str, csv_name,
+        )
+        if fallback_labels:
+            print(f"    filled tenor(s) {fallback_labels} from the 15%-spread "
+                  f"variant (zero rows under the primary 5% filter)")
+
+        # NOTE: domain_half_width is held at the original fixed 2.0 here,
+        # deliberately NOT using calibration/pricer.py's adaptive_half_width.
+        # D4 confirmed widening helps the (out-of-sample, not in this
+        # surface) T=1y comparison against COS for the crisis date, but
+        # empirically it ALSO regresses the in-sample 3-month fit sharply
+        # (RMSE 4.68->12.83 vp at hw=3.0) even as 1-month improves -- see
+        # the D4-fix validation in this session. Applying it here would
+        # make the actual in-sample diagnostic worse, so it is intentionally
+        # NOT wired into this figure-generation path. adaptive_half_width
+        # remains available (opt-in via theta_hint) for genuinely
+        # out-of-sample/long-maturity analyses only.
         gkw    = dict(N=_N_EVAL, N_tau=_N_TAU,
                       domain_half_width=2.0, bandwidth=_BW)
         pricer = make_cached_pricer(surface, S0, rates, grid_kwargs=gkw)
@@ -120,20 +219,12 @@ def _build_diagnostics() -> dict:
 
         _, _, df_diag = iv_rmse_and_max_err(theta, surface, pricer)
         df_diag["T_round"] = df_diag["T"].round(4)
-        diags[date_str] = (row_label, df_diag)
+        diags[date_str] = (row_label, df_diag, fallback_labels)
         print(f"    {len(df_diag)} quotes, "
               f"{df_diag['T'].nunique()} maturities, "
               f"model IV NaN: {df_diag['model_iv'].isna().sum()}")
 
     return diags
-
-
-def _tenor_col(T: float) -> int | None:
-    """Map a maturity T (years) to a column index 0..4, or None."""
-    for col_idx, (_, lo, hi) in enumerate(_TENORS):
-        if lo <= T <= hi:
-            return col_idx
-    return None
 
 
 # ── Figure 1: IV smile grid ───────────────────────────────────────────────────
@@ -152,7 +243,8 @@ def fig_iv_smiles(diags: dict):
     col_colors = [_MAT_COLORS[c] for c in range(n_cols)]
 
     for row_idx, (date_str, row_label, _) in enumerate(_DATES):
-        row_label_txt, df = diags[date_str]
+        row_label_txt, df, fallback_labels = diags[date_str]
+        fallback_set = set(fallback_labels)
 
         # Collect data organised by tenor
         tenor_data = {c: None for c in range(n_cols)}
@@ -189,6 +281,13 @@ def fig_iv_smiles(diags: dict):
             ax.axvline(0, color="0.8", lw=0.6, ls="--", zorder=1)
             ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
             ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
+
+            # D2 fix: flag panels whose data came from the looser (15%)
+            # spread filter because the primary (5%) filter left zero rows.
+            if tenor_label in fallback_set:
+                ax.text(0.97, 0.04, "spread<15%\n(fallback)",
+                        transform=ax.transAxes, ha="right", va="bottom",
+                        fontsize=5.5, color="0.45", style="italic")
 
             # Top-row: tenor label
             if row_idx == 0:
@@ -237,7 +336,8 @@ def fig_residuals(diags: dict):
 
     for ax_idx, (date_str, row_label, _) in enumerate(_DATES):
         ax = axes[ax_idx]
-        row_label_txt, df = diags[date_str]
+        row_label_txt, df, fallback_labels = diags[date_str]
+        fallback_set = set(fallback_labels)
 
         resid_vp = (df["model_iv"] - df["market_iv"]) * 100.0
         T_vals   = sorted(df["T_round"].unique())
@@ -255,6 +355,9 @@ def fig_residuals(diags: dict):
                 tenor_label = _TENORS[col_idx][0]
             else:
                 tenor_label = f"T={T_val:.2f}"
+            # D2 fix: flag tenors filled from the looser (15%) spread filter
+            if tenor_label in fallback_set:
+                tenor_label = f"{tenor_label} (spread<15%)"
 
             ax.scatter(lm[finite], res[finite],
                        s=14, color=color, alpha=0.75,

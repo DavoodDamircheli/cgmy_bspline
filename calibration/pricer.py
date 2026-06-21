@@ -31,12 +31,58 @@ price_surface therefore builds a wider grid via make_grid_manual with half_width
 COS pricer at N = 256.
 """
 
+import math
+
 import numpy as np
 
 from cgmy_bspline.parameters import CGMYParams as SolverP
 from cgmy_bspline.grid import make_grid_manual
 from cgmy_bspline.solver_cn import solve_cn
 from cgmy_bspline.projection import eval_solution
+
+
+# ---------------------------------------------------------------------------
+# Domain sizing
+# ---------------------------------------------------------------------------
+
+# Default/floor half-width -- adequate for typical (non-heavy-tailed) theta.
+_DEFAULT_HALF_WIDTH = 2.0
+# Cap on the adaptive widening -- chosen to match the half-width already
+# empirically validated in calibration/debug_domain_truncation.py (D4) and
+# calibration/debug_short_maturity.py (D3's local-refinement sweep), where
+# widening further started to coarsen h enough to hurt short-maturity
+# accuracy. This is a partial mitigation for very heavy tails (small G or
+# M), not a full fix -- see debug_domain_truncation.py for the measured
+# residual gap at this cap.
+_MAX_HALF_WIDTH = 3.0
+# Target exterior-tail weight exp(-min(G,M)*half_width) the adaptive rule
+# aims for, before hitting the cap above.
+_TARGET_TAIL_EPS = 0.05
+
+
+def adaptive_half_width(
+    G: float,
+    M: float,
+    base: float = _DEFAULT_HALF_WIDTH,
+    target_eps: float = _TARGET_TAIL_EPS,
+    cap: float = _MAX_HALF_WIDTH,
+) -> float:
+    """Domain half-width sized to theta's tail-decay rates (D4 fix).
+
+    Uses the same exp(-decay*half_width) truncation-factor heuristic as
+    cgmy_bspline/grid.py's domain_scale/G, domain_scale/M convention (see
+    calibration/debug_domain_truncation.py, item 1), evaluated against the
+    SLOWER-decaying (more dangerous) of the two tails, min(G, M).
+
+    Returns `base` unchanged for typical theta (G, M not too small) --
+    this is exactly the previous fixed default, so low-vol dates pay no
+    extra cost. Widens up to `cap` for heavy-tailed theta (e.g. a crisis-
+    period fit with G* ~ 0.1), instead of one shared fixed value across
+    all dates.
+    """
+    decay = min(G, M)
+    required = math.log(1.0 / target_eps) / decay
+    return float(min(cap, max(base, required)))
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +118,9 @@ def price_surface(
           p              int   B-spline order          (default 3)
           N_tau          int   CN time steps           (default 50)
           bandwidth      int   Toeplitz truncation     (default 2*N)
-          domain_half_width  float  ±log-price extent (default 2.0)
+          domain_half_width  float  ±log-price extent
+                             (default: adaptive_half_width(G, M), see below;
+                              equals 2.0 unless G or M is small)
 
     Returns
     -------
@@ -87,7 +135,7 @@ def price_surface(
     p       = gkw.get("p", 3)
     N_tau   = gkw.get("N_tau", 50)
     bw      = gkw.get("bandwidth", 2 * N)
-    half_w  = gkw.get("domain_half_width", 2.0)
+    half_w  = gkw.get("domain_half_width", adaptive_half_width(G, M))
 
     # ── Reference strike = S0 (ATM); grid centred at log(S0) ─────────────────
     K_ref    = float(S0)
@@ -145,6 +193,7 @@ def make_cached_pricer(
     S0: float,
     rates_by_T: dict,
     grid_kwargs: dict | None = None,
+    theta_hint: tuple | None = None,
 ):
     """Return a pricer_fn for calibration that pre-builds M_h and D_h once.
 
@@ -167,6 +216,16 @@ def make_cached_pricer(
         Mapping round(T, 6) → (r_eff, q_eff) for per-maturity discount rates.
     grid_kwargs : dict, optional
         Same keys as price_surface: N, p, N_tau, bandwidth, domain_half_width.
+    theta_hint : tuple (C, G, M, Y), optional
+        If given AND grid_kwargs does not explicitly set domain_half_width,
+        size the domain via adaptive_half_width(G, M) instead of the fixed
+        default (2.0). Intended for post-calibration re-evaluation/plotting
+        callers that already know the fitted theta (see
+        calibration/debug_domain_truncation.py, D4) -- NOT passed by the
+        live DE/L-BFGS optimization loop in calibrate.py, since theta varies
+        every call there and the whole point of this cache is to avoid
+        rebuilding the grid per call. Omitting it reproduces the exact prior
+        behaviour.
 
     Returns
     -------
@@ -192,7 +251,12 @@ def make_cached_pricer(
     p       = gkw.get("p",        3)
     N_tau   = gkw.get("N_tau",   10)
     bw      = gkw.get("bandwidth", 2 * N)
-    half_w  = gkw.get("domain_half_width", 2.0)
+    if "domain_half_width" in gkw:
+        half_w = gkw["domain_half_width"]
+    elif theta_hint is not None:
+        half_w = adaptive_half_width(theta_hint[1], theta_hint[2])
+    else:
+        half_w = _DEFAULT_HALF_WIDTH
 
     K_ref    = float(S0)
     log_Kref = math.log(K_ref)

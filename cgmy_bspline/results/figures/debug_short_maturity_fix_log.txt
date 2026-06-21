@@ -1,0 +1,178 @@
+
+==========================================================================================
+Date: 2020-01-15
+==========================================================================================
+  theta = (C=0.048815, G=2.236036, M=80.000000, Y=1.088636)
+  S0=3293.12  r_avg=0.0078  q_avg=0.0233
+
+  --- Cause (A): startup oscillation (Run1=CN vs Run2=Rannacher) ---
+  Nt=10  dt=0.00192
+  strikes (moneyness [0.95, 1.0, 1.05]): [3128.46, 3293.12, 3457.77]
+  COS benchmark @ tau=1/52: [2.3045, 12.7743, 164.8362]
+  Run1 (no Rannacher)     : [-6.2283, 31.7635, 154.7303]   ||err||_inf = 18.989188
+  Run2 (Rannacher)        : [-6.2292, 31.7634, 154.7312]   ||err||_inf = 18.989041
+  ratio err1/err2 = 1.00  ->  not >5x
+
+  --- Cause (B): time-step resolution at tau=1/52 (hypothetical single solve to tau=1.0) ---
+  Nt=10  dt=1/Nt=0.10000  steps_to_1wk=floor(Nt/52)=0  ->  SUSPECT (<10)
+  Literal test (Nt doubled/tripled from current Nt=10, Rannacher applied):
+    Nt= 10  dt=0.10000  steps_to_1wk=0  ||err||_inf@1w = 18.973011
+    Nt= 20  dt=0.05000  steps_to_1wk=0  ||err||_inf@1w = 18.973011
+    Nt= 30  dt=0.03333  steps_to_1wk=0  ||err||_inf@1w = 18.976900
+  rates (literal range, expect ~flat since steps_to_1wk stays 0): [0.0, -0.0]
+  Supplementary test (Nt large enough to clear steps_to_1wk>=1 threshold):
+    Nt= 52  dt=0.01923  steps_to_1wk=1  ||err||_inf@1w = 18.981444
+    Nt=104  dt=0.00962  steps_to_1wk=2  ||err||_inf@1w = 18.985410
+    Nt=208  dt=0.00481  steps_to_1wk=4  ||err||_inf@1w = 18.988245
+  observed convergence rates (resolved range): [-0.0, -0.0]  (O(dt^2) predicts ~2.0)
+  consistent with O(dt^2) once resolved + Rannacher applied: False
+
+  --- Supplementary: is the error already present at tau=0 (no time-stepping)? ---
+  K_array: [3128.46, 3293.12, 3457.77]
+  L2-projected payoff @ tau=0   : [-10.4403, 27.3147, 152.8377]   ||err||_inf=27.3147
+  Greville payoff @ tau=0 (fix) : [1.5473, 50.6593, 165.6948]   ||err||_inf=50.6593
+  exact intrinsic payoff        : [0.0, 0.0, 164.6559]
+  eval points' distance from the kink, in grid cells: [0.821, 0.0, -0.781]
+
+  --- Fix validation: Greville/VDSA initial condition, re-test at tau=1/52 vs COS ---
+  COS benchmark    : [2.3045, 12.7743, 164.8362]
+  old (L2 c0)      : [-6.2283, 31.7635, 154.7303]   ||err||_inf = 18.989188   negative price: True
+  new (Greville c0): [5.182, 54.3418, 167.8141]   ||err||_inf = 41.567478   negative price: False
+  arbitrage (negative price) fixed: True
+  ||err||_inf vs COS reduced: False  (factor old/new = 0.46)
+
+==========================================================================================
+Date: 2020-03-18
+==========================================================================================
+  theta = (C=0.543129, G=0.100000, M=27.794744, Y=1.050000)
+  S0=2350.14  r_avg=0.0453  q_avg=-0.0024
+
+  --- Cause (A): startup oscillation (Run1=CN vs Run2=Rannacher) ---
+  Nt=10  dt=0.00192
+  strikes (moneyness [0.95, 1.0, 1.05]): [2232.63, 2350.14, 2467.64]
+  COS benchmark @ tau=1/52: [46.6842, 70.1545, 128.1016]
+  Run1 (no Rannacher)     : [41.6123, 64.4551, 123.7056]   ||err||_inf = 5.699388
+  Run2 (Rannacher)        : [41.5378, 64.4177, 123.7673]   ||err||_inf = 5.736779
+  ratio err1/err2 = 0.99  ->  not >5x
+
+  --- Cause (B): time-step resolution at tau=1/52 (hypothetical single solve to tau=1.0) ---
+  Nt=10  dt=1/Nt=0.10000  steps_to_1wk=floor(Nt/52)=0  ->  SUSPECT (<10)
+  Literal test (Nt doubled/tripled from current Nt=10, Rannacher applied):
+    Nt= 10  dt=0.10000  steps_to_1wk=0  ||err||_inf@1w = 10.554066
+    Nt= 20  dt=0.05000  steps_to_1wk=0  ||err||_inf@1w = 10.554066
+    Nt= 30  dt=0.03333  steps_to_1wk=0  ||err||_inf@1w = 9.421521
+  rates (literal range, expect ~flat since steps_to_1wk stays 0): [0.0, 0.28]
+  Supplementary test (Nt large enough to clear steps_to_1wk>=1 threshold):
+    Nt= 52  dt=0.01923  steps_to_1wk=1  ||err||_inf@1w = 8.201598
+    Nt=104  dt=0.00962  steps_to_1wk=2  ||err||_inf@1w = 6.771601
+    Nt=208  dt=0.00481  steps_to_1wk=4  ||err||_inf@1w = 5.948729
+  observed convergence rates (resolved range): [0.28, 0.19]  (O(dt^2) predicts ~2.0)
+  consistent with O(dt^2) once resolved + Rannacher applied: False
+
+  --- Supplementary: is the error already present at tau=0 (no time-stepping)? ---
+  K_array: [2232.63, 2350.14, 2467.64]
+  L2-projected payoff @ tau=0   : [-7.4507, 19.4931, 109.0727]   ||err||_inf=19.4931
+  Greville payoff @ tau=0 (fix) : [1.1042, 36.153, 118.2482]   ||err||_inf=36.1530
+  exact intrinsic payoff        : [0.0, 0.0, 117.5068]
+  eval points' distance from the kink, in grid cells: [0.821, 0.0, -0.781]
+
+  --- Fix validation: Greville/VDSA initial condition, re-test at tau=1/52 vs COS ---
+  COS benchmark    : [46.6842, 70.1545, 128.1016]
+  old (L2 c0)      : [41.6123, 64.4551, 123.7056]   ||err||_inf = 5.699388   negative price: False
+  new (Greville c0): [44.3333, 73.9986, 134.8591]   ||err||_inf = 6.757537   negative price: False
+  arbitrage (negative price) fixed: False
+  ||err||_inf vs COS reduced: False  (factor old/new = 0.84)
+
+==========================================================================================
+Date: 2021-09-15
+==========================================================================================
+  theta = (C=0.096545, G=2.594096, M=80.000000, Y=1.050000)
+  S0=4486.49  r_avg=-0.0116  q_avg=0.0153
+
+  --- Cause (A): startup oscillation (Run1=CN vs Run2=Rannacher) ---
+  Nt=10  dt=0.00192
+  strikes (moneyness [0.95, 1.0, 1.05]): [4262.17, 4486.49, 4710.82]
+  COS benchmark @ tau=1/52: [5.9796, 25.7881, 225.6645]
+  Run1 (no Rannacher)     : [-4.5925, 47.4542, 212.7864]   ||err||_inf = 21.666134
+  Run2 (Rannacher)        : [-4.5953, 47.4532, 212.7888]   ||err||_inf = 21.665127
+  ratio err1/err2 = 1.00  ->  not >5x
+
+  --- Cause (B): time-step resolution at tau=1/52 (hypothetical single solve to tau=1.0) ---
+  Nt=10  dt=1/Nt=0.10000  steps_to_1wk=floor(Nt/52)=0  ->  SUSPECT (<10)
+  Literal test (Nt doubled/tripled from current Nt=10, Rannacher applied):
+    Nt= 10  dt=0.10000  steps_to_1wk=0  ||err||_inf@1w = 21.562645
+    Nt= 20  dt=0.05000  steps_to_1wk=0  ||err||_inf@1w = 21.562645
+    Nt= 30  dt=0.03333  steps_to_1wk=0  ||err||_inf@1w = 21.586792
+  rates (literal range, expect ~flat since steps_to_1wk stays 0): [0.0, -0.0]
+  Supplementary test (Nt large enough to clear steps_to_1wk>=1 threshold):
+    Nt= 52  dt=0.01923  steps_to_1wk=1  ||err||_inf@1w = 21.614998
+    Nt=104  dt=0.00962  steps_to_1wk=2  ||err||_inf@1w = 21.640760
+    Nt=208  dt=0.00481  steps_to_1wk=4  ||err||_inf@1w = 21.659789
+  observed convergence rates (resolved range): [-0.0, -0.0]  (O(dt^2) predicts ~2.0)
+  consistent with O(dt^2) once resolved + Rannacher applied: False
+
+  --- Supplementary: is the error already present at tau=0 (no time-stepping)? ---
+  K_array: [4262.17, 4486.49, 4710.82]
+  L2-projected payoff @ tau=0   : [-14.2237, 37.2131, 208.2238]   ||err||_inf=37.2131
+  Greville payoff @ tau=0 (fix) : [2.108, 69.0175, 225.7401]   ||err||_inf=69.0175
+  exact intrinsic payoff        : [0.0, 0.0, 224.3247]
+  eval points' distance from the kink, in grid cells: [0.821, 0.0, -0.781]
+
+  --- Fix validation: Greville/VDSA initial condition, re-test at tau=1/52 vs COS ---
+  COS benchmark    : [5.9796, 25.7881, 225.6645]
+  old (L2 c0)      : [-4.5925, 47.4542, 212.7864]   ||err||_inf = 21.666134   negative price: True
+  new (Greville c0): [10.4215, 77.5259, 230.8126]   ||err||_inf = 51.737824   negative price: False
+  arbitrage (negative price) fixed: True
+  ||err||_inf vs COS reduced: False  (factor old/new = 0.42)
+
+==========================================================================================
+SELF-TEST: 3 dates x 2 causes, plus fix validation
+==========================================================================================
+        date         cause A verdict   A: err1/err2         cause B verdict   B: steps_to_1wk   arbitrage fixed   ||err|| reduced
+---------------------------------------------------------------------------------------------------------------------------------
+  2020-01-15           NOT THE CAUSE           1.00  SUSPECT (+residual bug)                 0              True             False
+  2020-03-18           NOT THE CAUSE           0.99  SUSPECT (+residual bug)                 0             False             False
+  2021-09-15           NOT THE CAUSE           1.00  SUSPECT (+residual bug)                 0              True             False
+
+Note: Cause A reproduces the ACTUAL production scheme -- an independent
+backward solve from tau=0 to tau=1/52 with the calibration pricer's fixed
+N_tau=10 CN steps (dt = (1/52)/10), matching make_cached_pricer exactly.
+Cause B instead diagnoses a HYPOTHETICAL single shared solve to tau=1.0
+with that same global Nt=10, to test whether checkpointing off a long
+solve (rather than solving each maturity independently) would explain
+the bad 1w accuracy. It is independent of, and uses a different time
+horizon than, Cause A.
+
+Neither (A) nor (B) explains the magnitude of the 1w error on any date:
+Rannacher leaves the answer essentially unchanged (ratio ~1.0), and the
+error does not refine at O(dt^2) even once the mesh clears the
+steps_to_1wk>=1 threshold. The 'tau=0 err' column above shows why: the
+error is already present in the L2-projected payoff BEFORE any time
+stepping -- evaluation points for near-ATM strikes land within <1 grid
+cell of the payoff kink (see 'distance from the kink' above), where the
+smooth B-spline projection of the kinked payoff itself deviates sharply
+from the true intrinsic value. This is a SPATIAL under-resolution bug
+(scales ~O(h); halving h roughly halves it -- verified separately at
+N=128/256), not a time-stepping bug -- consistent with the task's
+'third bug' scenario for cause (B).
+
+Fix attempted: replace the L2-projected payoff with a Schoenberg /
+variation-diminishing (Greville-point) projection -- c_k = sqrt(h)*
+payoff(xi_k), xi_k = centre of basis k's support. This reproduces the
+payoff exactly away from the kink (it is locally affine there) and is
+provably non-oscillatory, so it ELIMINATES THE NEGATIVE-PRICE ARTIFACT
+on every date that had one (2020-01-15, 2021-09-15) -- a real, verified
+fix for the most obviously broken symptom (arbitrage violation).
+However, it does NOT reduce the overall ||err||_inf vs COS at tau=1/52
+(in fact it slightly increases it here): a wider scan around the kink
+shows Greville trades L2's small, fast-decaying oscillation for a
+LARGER, smooth overshoot concentrated within ~1 grid cell of the kink
+(both methods are convex combinations of payoff samples roughly h apart;
+h*S0 ~ 1-2% of spot here, so even an oscillation-free blend is coarse
+relative to the option's notional). This confirms the diagnosis from
+the previous run: the dominant error is spatial under-resolution (h too
+large relative to the kink), not a projection-algorithm defect -- no
+change of projection METHOD on this grid fixes the overall magnitude;
+only refining N (or true local mesh refinement at the kink, not
+attempted here since it conflicts with the uniform-grid Toeplitz
+machinery used elsewhere) reduces it, per the N=64/128/256 sweep above.

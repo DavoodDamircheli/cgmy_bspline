@@ -1,0 +1,185 @@
+====================================================================================================
+[1] results/benchmark_results.csv -- raw rows, read directly (not recomputed)
+====================================================================================================
+
+  method            = B-Spline Galerkin
+  theta_star (C,G,M,Y) = (0.543129, 0.1, 27.794744, 1.05)
+  iv_rmse           = 0.071877  (7.19 vp)
+  iv_max_err        = 0.170995  (17.10 vp)
+  total_time_sec    = 115.198447
+  de_time_sec       = 111.377806
+  lbfgs_time_sec    = 3.600014
+  n_fev_total       = 11510
+  N_DE / N_lbfgs    = 32 / 64
+
+  method            = GL Finite-Difference
+  theta_star (C,G,M,Y) = (0.582197, 0.1, 43.382797, 1.05)
+  iv_rmse           = 0.066564  (6.66 vp)
+  iv_max_err        = 0.162778  (16.28 vp)
+  total_time_sec    = 19.835207
+  de_time_sec       = 19.030831
+  lbfgs_time_sec    = 0.620203
+  n_fev_total       = 12980
+  N_DE / N_lbfgs    = 64 / 128
+
+====================================================================================================
+[2] Recomputing alpha both ways
+====================================================================================================
+  T_Bspline = 115.198s
+  T_GL      = 19.835s
+  alpha_a = T_GL / T_Bspline = 0.1722
+  alpha_b = T_Bspline / T_GL = 5.8078
+
+  Plotted/annotated value on fig_speed_comparison.png: 0.17
+  alpha_a matches plotted value: True
+  alpha_b matches plotted value: False
+
+  calibration/benchmark.py's own docstring/code defines:
+      alpha = GL_total_time_sec / Bspline_total_time_sec
+  -- i.e. alpha_a. The annotated 0.17 is alpha_a, computed and labeled
+  consistently with that definition (and with calibration_report.tex's
+  own formula alpha = T_GL/T_BS = 20/115 = 0.17).
+
+  The TASK's hypothesised 'definition' -- 'alpha = T_GL/T_BS, with the
+  interpretation B-spline is alpha times faster, which only makes sense
+  if alpha>1' -- does NOT match what benchmark.py or the report actually
+  claim. Neither claims B-Spline is faster. benchmark.py's own branching
+  logic explicitly handles BOTH directions:
+      if alpha < 1.0: print('GL is {1/alpha}x faster ...')
+      else:           print('B-Spline is {alpha}x faster ...')
+  and the report states outright: 'GL calibration is 5.8x faster in wall
+  time' (1/0.17 = 5.88). So alpha=0.17 meaning 'GL is faster' is the
+  INTENDED reading, not a contradiction of the stated definition.
+
+  Ruling out a column-swap (data) bug instead of a labelling issue:
+    N_DE: B-Spline=32  GL=64  (GL uses LARGER N, as the accuracy-matched design requires)
+    implied per-eval cost (de_time_sec/de_nfev): B-Spline=9.82ms @ N=32  GL=1.49ms @ N=64
+    -> despite using HALF the grid points, B-Spline's per-eval cost is 6.6x GL's per-eval cost. This is internally
+    consistent with calibration_report.tex's stated driver ('GL matrix
+    assembly is O(N^2) vectorised NumPy; B-spline involves IFFT calls and
+    Toeplitz matvecs'), and with how the CSV row is built in benchmark.py
+    (a straightforward field-by-field dict->row append, not an
+    index/zip operation that could silently transpose two rows). No
+    evidence of a column swap: the numbers hang together as one
+    coherent story, not two halves of a flipped pair.
+
+====================================================================================================
+[3] Re-checking Step 10's OWN self-test (calibration/benchmark.py, ~line 322)
+====================================================================================================
+  benchmark.py's ACTUAL coded tolerances (not the task's restated ~20%/~0.5vp):
+    C, G, Y : 20% threshold
+    M       : 60% threshold (explicitly loosened -- 'M is poorly identified
+              on 2-maturity crisis surface')
+    iv_rmse : 1.0 vp threshold ('different pricers find different local optima')
+
+     C: B-Spline=0.54313  GL=0.58220  |Δ|/|BS|=7.2%  (threshold 20%)  [OK]
+     G: B-Spline=0.10000  GL=0.10000  |Δ|/|BS|=0.0%  (threshold 20%)  [OK]
+     M: B-Spline=27.79474  GL=43.38280  |Δ|/|BS|=56.1%  (threshold 60%)  [OK]
+     Y: B-Spline=1.05000  GL=1.05000  |Δ|/|BS|=0.0%  (threshold 20%)  [OK]
+    iv_rmse: B-Spline=0.0719  GL=0.0666  |Δ|=0.0053 (0.53 vp)  (threshold 1.0 vp)  [OK]
+
+  Step 10's OWN self-test (its actual tolerances): PASS
+
+  For comparison, under the TASK's restated uniform tolerance (~20% for
+  ALL FOUR params, ~0.5 vp for iv_rmse -- i.e. NOT using benchmark.py's
+  own M-specific 60% carve-out):
+     C: |Δ|/|BS|=7.2%  (20% threshold)  [OK]
+     G: |Δ|/|BS|=0.0%  (20% threshold)  [OK]
+     M: |Δ|/|BS|=56.1%  (20% threshold)  [FAIL]
+     Y: |Δ|/|BS|=0.0%  (20% threshold)  [OK]
+    iv_rmse: |Δ|=0.53 vp  (0.5 vp threshold)  [FAIL]
+  Naive uniform-tolerance verdict: FAIL (M and iv_rmse marginally over driving the failure)
+
+====================================================================================================
+[4] calibration/make_figures.py -- exact alpha-annotation code
+====================================================================================================
+
+      methods  = df["method"].tolist()
+      times    = df["total_time_sec"].tolist()
+      n_de     = df["N_DE"].tolist()
+      n_lb     = df["N_lbfgs"].tolist()
+      iv_rmses = (df["iv_rmse"] * 100).tolist()
+  
+      alpha = times[1] / times[0]  # GL / B-Spline
+  
+      # Bar colours
+      bar_colors = ["#2166AC", "#D6604D"]   # blue for B-Spline, red-orange for GL
+  
+      fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
+  
+      x_pos = [0, 1]
+      bars  = ax.bar(x_pos, times, width=0.5,
+                     color=bar_colors, edgecolor="0.3", linewidth=0.7)
+  
+      # Value labels on bars
+      for bar, t, rmse in zip(bars, times, iv_rmses):
+          ax.text(bar.get_x() + bar.get_width() / 2,
+                  t + 1.5,
+                  f"{t:.0f} s\n(IV RMSE {rmse:.2f} vp)",
+                  ha="center", va="bottom", fontsize=8)
+  
+      # Alpha annotation (arrow between bars)
+      y_mid = (times[0] + times[1]) / 2.0
+      ax.annotate(
+          "",
+          xy=(x_pos[1], times[1] + 4),
+          xytext=(x_pos[0], times[1] + 4),
+          arrowprops=dict(arrowstyle="<->", color="0.3", lw=1.2),
+      )
+      ax.text(0.5, times[1] + 8,
+              r"$\alpha = T_{\mathrm{GL}}/T_{\mathrm{BS}} = $" + f"{alpha:.2f}",
+              ha="center", va="bottom", fontsize=9, color="0.2")
+  
+
+  Contains ax.axhline(...): False
+  Contains transform=ax.transAxes anywhere: False
+
+  NEITHER hypothesised bug is present:
+    - No axhline: alpha (0.17) is never plotted as a y-VALUE on the
+      seconds axis. The double-headed arrow's y-coordinate is
+      times[1]+4 = GL_time+4 (~23.8s), and the alpha TEXT label sits
+      at times[1]+8 (~27.8s) -- both are heights derived from the
+      bar data, not the dimensionless ratio itself.
+    - No transAxes/data-coordinate mixing: x=0.5 and y=times[1]+8 are
+      BOTH plain data coordinates (x in bar-index units 0..1, y in
+      seconds) -- consistent with bar.get_x()+bar.get_width()/2 used
+      for the value labels just above. No axes-fraction value is
+      mixed in anywhere in this function.
+    - The arrow/text DOES end up positioned just above the SHORTER
+      (GL) bar rather than spanning up to the TALLER (B-Spline) bar
+      -- which can look visually odd/disconnected from a 'compare
+      the two bar heights' arrow -- but the NUMBER printed (0.17) is
+      computed correctly and the formula label is correct.
+  Verdict: NOT a units bug, NOT a coordinate-system bug. No bug found
+  in this annotation code.
+
+====================================================================================================
+SELF-TEST: consolidated verdict
+====================================================================================================
+  Is alpha correct per Step 10's definition (alpha = T_GL/T_Bspline)?
+    YES. Correct value = 0.1722 (matches the plotted 0.17 and calibration_report.tex's 0.17).
+    This means GL is 5.81x FASTER than B-Spline in
+    this accuracy-matched comparison -- not the reverse. No evidence of a
+    swapped-columns data bug (per-eval timings, N_DE values, and the row-
+    construction code in benchmark.py are all internally consistent).
+
+  Did Step 10's own self-test pass when the CSV was generated?
+    Per benchmark.py's ACTUAL coded tolerances (C/G/Y 20%, M 60%, RMSE 1.0vp): PASS.
+    Per the task's restated naive uniform tolerance (20% all params, 0.5vp): FAIL (M disagrees by 56.1%, and iv_rmse differs by 0.53 vp, marginally over 0.5vp).
+    benchmark.py intentionally loosens M's tolerance to 60% because M is
+    independently known to be weakly identified on this 2-maturity crisis
+    surface (same conclusion drawn in calibration_report.tex's §Robustness:
+    M* moves 76% under a spread-filter change alone). Under its own,
+    deliberately-designed tolerances, the comparison DID pass and alpha was
+    treated as trustworthy by Step 10's own logic.
+
+  Is the plotting bug a units bug or a coordinate-system bug?
+    NEITHER. No axhline, no transAxes/data-coordinate mixing was found.
+    The alpha value and its formula label are computed and rendered
+    correctly; the annotation's vertical placement (just above the
+    shorter bar) is a debatable visual choice, not a bug.
+
+  Overall: no bug found anywhere in this chain (data, self-test logic, or
+  plotting code). 0.17 is the correct, intended value: GL genuinely
+  calibrates faster than B-Spline in this specific accuracy-matched, 
+  moderate-accuracy regime -- the report's own text says so explicitly.
